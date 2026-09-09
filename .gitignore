@@ -1,0 +1,8 @@
+# Build directory
+build/
+bin/
+
+# IDE / macOS
+.DS_Store
+.vscode/
+.idea/
