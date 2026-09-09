@@ -2,32 +2,51 @@
 
 A lightweight, high-performance C++ HTTP relay server built with [`cpp-httplib`](https://github.com/yhirose/cpp-httplib) and [`nlohmann/json`](https://github.com/nlohmann/json).
 
-## Features
+## Architecture
 
-- Built with modern C++ (C++17).
-- Zero external package dependencies needed: CMake automatically downloads and links `cpp-httplib` and `nlohmann/json` via `FetchContent`.
-- **Job Data Model**:
-  - `JobType`: `SendText`, `SendPhoto`, `SendVoice`, `SendVideoNote`, `SendSticker`, `Delete` (supports `snake_case` or `PascalCase` in JSON).
-  - `Job`: `chat_id`, `message_id`, `reply_to_message_id`, `type`, `text`, `file_id`.
-- Accepts Telegram event payloads, e.g.:
-  ```json
-  {
-    "chat_id": 123,
-    "message_id": 456,
-    "reply_to_message_id": 100,
-    "type": "text",
-    "text": "Hello world"
-  }
-  ```
-- Returns standard JSON response:
-  ```json
-  {
-    "accepted": true
-  }
-  ```
-- Handles input validation and malformed JSON errors gracefully (returns HTTP 400 with details).
-- Graceful shutdown on `SIGINT` (Ctrl+C) and `SIGTERM`.
-- Health check endpoint (`GET /health`).
+```
+                       PRODUCER (Ingestion Layer)
+  Telegram Webhooks /
+     cURL Clients
+          │
+          │ HTTP POST /message (< 1ms response)
+          ▼
+   ┌────────────────────────────────────────────────────────────┐
+   │                  cpp-httplib HTTP Server                   │
+   │  1. Receive HTTP request                                   │
+   │  2. Parse & validate JSON into `Job` struct                │
+   │  3. Push Job onto queue: job_queue->push(job)              │
+   │  4. Immediately send response: {"accepted": true}          │
+   └─────────────────────────────┬──────────────────────────────┘
+                                 │
+                     BUFFER / SYNCHRONIZATION
+                                 │
+                                 ▼
+   ┌────────────────────────────────────────────────────────────┐
+   │               JobQueue (Thread-Safe Queue)                 │
+   │  - std::queue<Job> protected by std::mutex                 │
+   │  - std::condition_variable (zero CPU use when idle)        │
+   │  - Holds jobs in memory awaiting available workers         │
+   └─────────────────────────────┬──────────────────────────────┘
+                                 │
+                       CONSUMERS (Worker Layer)
+                                 │
+            ┌────────────────────┼────────────────────┐
+            ▼                    ▼                    ▼
+     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+     │  Worker #1   │     │  Worker #2   │     │  Worker #3   │
+     │ (std::thread)│     │ (std::thread)│     │ (std::thread)│
+     │              │     │              │     │              │
+     │  pop(job)    │     │  pop(job)    │     │  pop(job)    │
+     │  switch(type)│     │  switch(type)│     │  switch(type)│
+     │  execute()   │     │  execute()   │     │  execute()   │
+     └──────────────┘     └──────────────┘     └──────────────┘
+```
+
+1. **Ingestion Layer (`src/main.cpp`)**: High-throughput HTTP server that validates incoming JSON against the strongly-typed `Job` struct, pushes it to the queue, and acknowledges the request in `< 1ms`.
+2. **Buffer Layer (`include/job_queue.hpp`)**: Thread-safe FIFO queue synchronized with `std::mutex` and `std::condition_variable` (idle workers sleep without burning CPU).
+3. **Worker Pool (`include/worker_pool.hpp`)**: Configurable pool of background OS threads consuming jobs and executing actions (`SendText`, `SendPhoto`, `Delete`, etc.) in parallel.
+
 
 
 ## Prerequisites
@@ -48,17 +67,18 @@ The executable will be located at `build/relay_server`.
 ## Running the Server
 
 ```bash
-# Default port (8080)
+# Default port (8080) with default 3 worker threads
 ./build/relay_server
 
-# Or specify a custom port
-./build/relay_server 8088
+# Specify custom port and custom worker count: ./build/relay_server [PORT] [WORKERS]
+./build/relay_server 8080 5
 
-# Or use the PORT environment variable
-PORT=9000 ./build/relay_server
+# Or configure via environment variables
+PORT=9000 WORKERS=8 ./build/relay_server
 ```
 
 ## Testing with cURL
+
 
 ### 1. Send Telegram Message Payload
 ```bash

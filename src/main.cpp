@@ -2,19 +2,26 @@
 #include <string>
 #include <csignal>
 #include <cstdlib>
+#include <memory>
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include "job.hpp"
+#include "job_queue.hpp"
+#include "worker_pool.hpp"
 
 using json = nlohmann::json;
 
-// Global server instance for signal handling
+// Global references for signal handling
 httplib::Server svr;
+std::shared_ptr<WorkerPool> g_worker_pool = nullptr;
 
 void signal_handler(int signal) {
     if (signal == SIGINT || signal == SIGTERM) {
-        std::cout << "\n[INFO] Gracefully shutting down server..." << std::endl;
+        std::cout << "\n[INFO] Signal received. Gracefully shutting down server and workers..." << std::endl;
         svr.stop();
+        if (g_worker_pool) {
+            g_worker_pool->stop();
+        }
     }
 }
 
@@ -23,7 +30,7 @@ int main(int argc, char* argv[]) {
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    // Determine port from environment or CLI argument (default: 8080)
+    // 1. Configure Port (CLI argument 1, or PORT env, default 8080)
     int port = 8080;
     if (const char* env_port = std::getenv("PORT")) {
         port = std::stoi(env_port);
@@ -32,18 +39,34 @@ int main(int argc, char* argv[]) {
         port = std::stoi(argv[1]);
     }
 
-    // Health check endpoint
-    svr.Get("/health", [](const httplib::Request&, httplib::Response& res) {
+    // 2. Configure Worker Count (CLI argument 2, or WORKERS / WORKER_COUNT env, default 3)
+    size_t worker_count = 3;
+    if (const char* env_workers = std::getenv("WORKERS")) {
+        worker_count = std::stoul(env_workers);
+    } else if (const char* env_worker_count = std::getenv("WORKER_COUNT")) {
+        worker_count = std::stoul(env_worker_count);
+    }
+    if (argc > 2) {
+        worker_count = std::stoul(argv[2]);
+    }
+
+    // 3. Initialize Thread-Safe Queue and Worker Pool
+    auto job_queue = std::make_shared<JobQueue>();
+    g_worker_pool = std::make_shared<WorkerPool>(job_queue, worker_count);
+    g_worker_pool->start();
+
+    // Health check endpoint (includes worker and queue stats)
+    svr.Get("/health", [job_queue, worker_count](const httplib::Request&, httplib::Response& res) {
         json response = {
-            {"status", "ok"}
+            {"status", "ok"},
+            {"workers", worker_count},
+            {"pending_jobs", job_queue->size()}
         };
         res.set_content(response.dump(2), "application/json");
     });
 
-    // Relay endpoint handler
-    auto handle_relay_request = [](const httplib::Request& req, httplib::Response& res) {
-        std::cout << "[INFO] Incoming POST request from " << req.remote_addr << std::endl;
-
+    // Relay endpoint handler: pushes job onto queue and returns immediately
+    auto handle_relay_request = [job_queue](const httplib::Request& req, httplib::Response& res) {
         json payload;
         try {
             payload = json::parse(req.body);
@@ -62,21 +85,10 @@ int main(int argc, char* argv[]) {
         try {
             Job job = payload.get<Job>();
 
-            std::cout << "[INFO] Received Job: "
-                      << "chat_id=" << job.chat_id
-                      << ", message_id=" << job.message_id
-                      << ", reply_to_message_id=" << job.reply_to_message_id
-                      << ", type=" << to_string(job.type);
+            // Enqueue job for background workers
+            job_queue->push(std::move(job));
 
-            if (!job.text.empty()) {
-                std::cout << ", text=\"" << job.text << "\"";
-            }
-            if (!job.file_id.empty()) {
-                std::cout << ", file_id=\"" << job.file_id << "\"";
-            }
-            std::cout << std::endl;
-
-            // Prepare success response
+            // Return accepted response immediately (< 1ms)
             json success_res = {
                 {"accepted", true}
             };
@@ -93,7 +105,6 @@ int main(int argc, char* argv[]) {
         }
     };
 
-
     // Support both root "/" and "/relay" / "/message" endpoints
     svr.Post("/", handle_relay_request);
     svr.Post("/relay", handle_relay_request);
@@ -101,6 +112,7 @@ int main(int argc, char* argv[]) {
 
     std::cout << "===========================================" << std::endl;
     std::cout << " Relay Engine Server running on port " << port << std::endl;
+    std::cout << " Worker threads active: " << worker_count << std::endl;
     std::cout << " Endpoints:" << std::endl;
     std::cout << "   GET  /health" << std::endl;
     std::cout << "   POST / (or /relay, /message)" << std::endl;
@@ -109,7 +121,14 @@ int main(int argc, char* argv[]) {
 
     if (!svr.listen("0.0.0.0", port)) {
         std::cerr << "[FATAL] Failed to bind to 0.0.0.0:" << port << std::endl;
+        if (g_worker_pool) {
+            g_worker_pool->stop();
+        }
         return 1;
+    }
+
+    if (g_worker_pool) {
+        g_worker_pool->stop();
     }
 
     return 0;
