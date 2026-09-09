@@ -23,4 +23,6 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(nlohmann_json httplib)
 
 add_executable(relay_server src/main.cpp)
+target_include_directories(relay_server PRIVATE include)
 target_link_libraries(relay_server PRIVATE httplib::httplib nlohmann_json::nlohmann_json)
+

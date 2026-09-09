@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <httplib.h>
 #include <nlohmann/json.hpp>
+#include "job.hpp"
 
 using json = nlohmann::json;
 
@@ -57,29 +58,23 @@ int main(int argc, char* argv[]) {
             return;
         }
 
-        // Validate required fields
-        if (!payload.contains("chat_id") || !payload.contains("message_id") || !payload.contains("type")) {
-            std::cerr << "[WARN] Missing required fields in payload" << std::endl;
-            json err_res = {
-                {"accepted", false},
-                {"error", "Required fields missing. Expected: chat_id, message_id, type"}
-            };
-            res.status = 400;
-            res.set_content(err_res.dump(2), "application/json");
-            return;
-        }
-
-        // Extract and log details
+        // Deserialize and validate into Job struct
         try {
-            int64_t chat_id = payload["chat_id"].get<int64_t>();
-            int64_t message_id = payload["message_id"].get<int64_t>();
-            std::string type = payload["type"].get<std::string>();
+            Job job = payload.get<Job>();
 
-            std::cout << "[INFO] Accepted telegram event:"
-                      << " chat_id=" << chat_id
-                      << ", message_id=" << message_id
-                      << ", type=\"" << type << "\""
-                      << std::endl;
+            std::cout << "[INFO] Received Job: "
+                      << "chat_id=" << job.chat_id
+                      << ", message_id=" << job.message_id
+                      << ", reply_to_message_id=" << job.reply_to_message_id
+                      << ", type=" << to_string(job.type);
+
+            if (!job.text.empty()) {
+                std::cout << ", text=\"" << job.text << "\"";
+            }
+            if (!job.file_id.empty()) {
+                std::cout << ", file_id=\"" << job.file_id << "\"";
+            }
+            std::cout << std::endl;
 
             // Prepare success response
             json success_res = {
@@ -87,16 +82,17 @@ int main(int argc, char* argv[]) {
             };
             res.status = 200;
             res.set_content(success_res.dump(2), "application/json");
-        } catch (const json::exception& e) {
-            std::cerr << "[ERROR] Field type mismatch: " << e.what() << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "[ERROR] Invalid job payload: " << e.what() << std::endl;
             json err_res = {
                 {"accepted", false},
-                {"error", "Invalid field types for chat_id, message_id, or type"}
+                {"error", std::string("Invalid job payload: ") + e.what()}
             };
             res.status = 400;
             res.set_content(err_res.dump(2), "application/json");
         }
     };
+
 
     // Support both root "/" and "/relay" / "/message" endpoints
     svr.Post("/", handle_relay_request);

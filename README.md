@@ -6,12 +6,17 @@ A lightweight, high-performance C++ HTTP relay server built with [`cpp-httplib`]
 
 - Built with modern C++ (C++17).
 - Zero external package dependencies needed: CMake automatically downloads and links `cpp-httplib` and `nlohmann/json` via `FetchContent`.
-- Accepts Telegram-formatted JSON event payloads:
+- **Job Data Model**:
+  - `JobType`: `SendText`, `SendPhoto`, `SendVoice`, `SendVideoNote`, `SendSticker`, `Delete` (supports `snake_case` or `PascalCase` in JSON).
+  - `Job`: `chat_id`, `message_id`, `reply_to_message_id`, `type`, `text`, `file_id`.
+- Accepts Telegram event payloads, e.g.:
   ```json
   {
     "chat_id": 123,
     "message_id": 456,
-    "type": "text"
+    "reply_to_message_id": 100,
+    "type": "text",
+    "text": "Hello world"
   }
   ```
 - Returns standard JSON response:
@@ -23,6 +28,7 @@ A lightweight, high-performance C++ HTTP relay server built with [`cpp-httplib`]
 - Handles input validation and malformed JSON errors gracefully (returns HTTP 400 with details).
 - Graceful shutdown on `SIGINT` (Ctrl+C) and `SIGTERM`.
 - Health check endpoint (`GET /health`).
+
 
 ## Prerequisites
 
