@@ -6,13 +6,18 @@
 #include <memory>
 #include <atomic>
 #include <chrono>
-#include <random>
 #include "job_queue.hpp"
+#include "rate_limiter.hpp"
 
 class WorkerPool {
 public:
-    explicit WorkerPool(std::shared_ptr<JobQueue> queue, size_t worker_count = 3)
-        : queue_(std::move(queue)), worker_count_(worker_count == 0 ? 1 : worker_count), running_(false) {}
+    explicit WorkerPool(std::shared_ptr<JobQueue> queue,
+                        std::shared_ptr<RateLimiter> rate_limiter = nullptr,
+                        size_t worker_count = 3)
+        : queue_(std::move(queue)),
+          rate_limiter_(std::move(rate_limiter)),
+          worker_count_(worker_count == 0 ? 1 : worker_count),
+          running_(false) {}
 
     ~WorkerPool() {
         stop();
@@ -34,9 +39,15 @@ public:
             return;
         }
         running_ = false;
+
+        // Stop rate limiter and queue to release all waiting workers
+        if (rate_limiter_) {
+            rate_limiter_->stop();
+        }
         if (queue_) {
             queue_->stop();
         }
+
         for (auto& worker : workers_) {
             if (worker.joinable()) {
                 worker.join();
@@ -51,6 +62,10 @@ public:
 
     bool is_running() const {
         return running_;
+    }
+
+    std::shared_ptr<RateLimiter> rate_limiter() const {
+        return rate_limiter_;
     }
 
 private:
@@ -72,17 +87,33 @@ private:
     }
 
     void process_job(size_t worker_id, const Job& job) {
-        // Generate simulated network latency between 100ms and 500ms
-        static thread_local std::mt19937 rng(std::random_device{}());
-        std::uniform_int_distribution<int> dist(100, 500);
-        int simulated_latency_ms = dist(rng);
+        // 1. Acquire global rate limiter token before initiating outgoing call
+        if (rate_limiter_) {
+            if (!rate_limiter_->acquire()) {
+                return; // Server is shutting down
+            }
+        }
 
         {
             std::lock_guard<std::mutex> lock(log_mutex_);
-            std::cout << "[Worker #" << worker_id << "] ⏳ START Job: "
-                      << "chat_id=" << job.chat_id
-                      << ", message_id=" << job.message_id
-                      << ", type=" << to_string(job.type);
+
+            // Get current timestamp using thread-safe reentrant localtime_r
+            auto now = std::chrono::system_clock::now();
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+            std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+            struct tm tm_buf;
+#if defined(_WIN32)
+            localtime_s(&tm_buf, &now_c);
+#else
+            localtime_r(&now_c, &tm_buf);
+#endif
+            char time_buf[16];
+            std::strftime(time_buf, sizeof(time_buf), "%H:%M:%S", &tm_buf);
+
+            std::cout << "[" << time_buf << "." << (ms.count() < 10 ? "00" : (ms.count() < 100 ? "0" : "")) << ms.count()
+                      << "] [Worker #" << worker_id << "] 🚀 OUTGOING CALL message_id=" << job.message_id
+                      << " (type=" << to_string(job.type);
+
 
             if (!job.text.empty()) {
                 std::cout << ", text=\"" << job.text << "\"";
@@ -90,22 +121,13 @@ private:
             if (!job.file_id.empty()) {
                 std::cout << ", file_id=\"" << job.file_id << "\"";
             }
-            std::cout << " (simulating " << simulated_latency_ms << "ms network call...)"
-                      << std::endl;
+            if (rate_limiter_) {
+                std::cout << ", rate_limit=" << rate_limiter_->rate() << "/s";
+            }
+            std::cout << ")" << std::endl;
         }
 
-        // Simulate outbound network request delay (e.g. calling Telegram Bot API)
-        std::this_thread::sleep_for(std::chrono::milliseconds(simulated_latency_ms));
-
-        {
-            std::lock_guard<std::mutex> lock(log_mutex_);
-            std::cout << "[Worker #" << worker_id << "] ✅ FINISHED Job: "
-                      << "message_id=" << job.message_id
-                      << " in " << simulated_latency_ms << "ms"
-                      << std::endl;
-        }
-
-        // Dispatched action placeholder based on job.type
+        // Outbound action dispatch based on job.type (e.g. Telegram Bot API call)
         switch (job.type) {
             case JobType::SendText:
                 break;
@@ -122,11 +144,10 @@ private:
         }
     }
 
-
     std::shared_ptr<JobQueue> queue_;
+    std::shared_ptr<RateLimiter> rate_limiter_;
     size_t worker_count_;
     std::atomic<bool> running_{false};
     std::vector<std::thread> workers_;
     mutable std::mutex log_mutex_;
 };
-

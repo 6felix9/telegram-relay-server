@@ -67,20 +67,29 @@ The executable will be located at `build/relay_server`.
 ## Running the Server
 
 ```bash
-# Default port (8080) with default 3 worker threads
+# Default: port 8080, 3 workers, 20 outgoing calls/sec
 ./build/relay_server
 
-# Specify custom port and custom worker count: ./build/relay_server [PORT] [WORKERS]
-./build/relay_server 8080 5
+# Positional arguments: ./build/relay_server [PORT] [WORKERS] [RATE_LIMIT]
+./build/relay_server 8080 5 20
 
 # Or configure via environment variables
-PORT=9000 WORKERS=8 ./build/relay_server
+PORT=9000 WORKERS=8 RATE_LIMIT=20 ./build/relay_server
 ```
 
-## Testing with cURL
+## Testing
 
+### 1. Test Rate Limiter (Automated Burst Test)
+A benchmark test script is included at [`scripts/test_rate_limit.sh`](file:///Users/puaht/relay-engine/scripts/test_rate_limit.sh):
 
-### 1. Send Telegram Message Payload
+```bash
+# Usage: ./scripts/test_rate_limit.sh [PORT] [NUMBER_OF_REQUESTS]
+./scripts/test_rate_limit.sh 8080 30
+```
+This sends 30 concurrent requests instantly to the server. You will observe all requests accepted immediately by the HTTP layer, while the server console demonstrates each worker acquiring tokens and pacing outgoing calls at the configured rate limit (default 20 calls/sec).
+
+### 2. Send Telegram Message Payload
+
 ```bash
 curl -X POST http://localhost:8080/ \
   -H "Content-Type: application/json" \

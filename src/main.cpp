@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 #include "job.hpp"
 #include "job_queue.hpp"
+#include "rate_limiter.hpp"
 #include "worker_pool.hpp"
 
 using json = nlohmann::json;
@@ -17,13 +18,10 @@ std::shared_ptr<WorkerPool> g_worker_pool = nullptr;
 
 void signal_handler(int signal) {
     if (signal == SIGINT || signal == SIGTERM) {
-        std::cout << "\n[INFO] Signal received. Gracefully shutting down server and workers..." << std::endl;
         svr.stop();
-        if (g_worker_pool) {
-            g_worker_pool->stop();
-        }
     }
 }
+
 
 int main(int argc, char* argv[]) {
     // Setup signal handling
@@ -50,16 +48,27 @@ int main(int argc, char* argv[]) {
         worker_count = std::stoul(argv[2]);
     }
 
-    // 3. Initialize Thread-Safe Queue and Worker Pool
+    // 3. Configure Rate Limit (CLI argument 3, or RATE_LIMIT env, default 20 calls/sec)
+    double rate_limit = 20.0;
+    if (const char* env_rate = std::getenv("RATE_LIMIT")) {
+        rate_limit = std::stod(env_rate);
+    }
+    if (argc > 3) {
+        rate_limit = std::stod(argv[3]);
+    }
+
+    // 4. Initialize Queue, Rate Limiter, and Worker Pool
     auto job_queue = std::make_shared<JobQueue>();
-    g_worker_pool = std::make_shared<WorkerPool>(job_queue, worker_count);
+    auto rate_limiter = std::make_shared<RateLimiter>(rate_limit);
+    g_worker_pool = std::make_shared<WorkerPool>(job_queue, rate_limiter, worker_count);
     g_worker_pool->start();
 
-    // Health check endpoint (includes worker and queue stats)
-    svr.Get("/health", [job_queue, worker_count](const httplib::Request&, httplib::Response& res) {
+    // Health check endpoint (includes worker, queue, and rate limit stats)
+    svr.Get("/health", [job_queue, rate_limiter, worker_count](const httplib::Request&, httplib::Response& res) {
         json response = {
             {"status", "ok"},
             {"workers", worker_count},
+            {"rate_limit_per_second", rate_limiter->rate()},
             {"pending_jobs", job_queue->size()}
         };
         res.set_content(response.dump(2), "application/json");
@@ -113,6 +122,7 @@ int main(int argc, char* argv[]) {
     std::cout << "===========================================" << std::endl;
     std::cout << " Relay Engine Server running on port " << port << std::endl;
     std::cout << " Worker threads active: " << worker_count << std::endl;
+    std::cout << " Global Rate Limit:     " << rate_limit << " calls/sec" << std::endl;
     std::cout << " Endpoints:" << std::endl;
     std::cout << "   GET  /health" << std::endl;
     std::cout << "   POST / (or /relay, /message)" << std::endl;
