@@ -1,8 +1,10 @@
-# Relay Engine (C++ HTTP JSON Server)
+# Telegram Relay Server
 
-A lightweight, high-performance C++ HTTP relay server built with [`cpp-httplib`](https://github.com/yhirose/cpp-httplib) and [`nlohmann/json`](https://github.com/nlohmann/json).
+A lightweight C++ HTTP relay and rate-limited message dispatcher for Telegram.
+
 
 ## Architecture
+
 
 ```
                        PRODUCER (Ingestion Layer)
@@ -62,20 +64,22 @@ cmake -B build -S .
 cmake --build build
 ```
 
-The executable will be located at `build/relay_server`.
+The executable will be located at `build/telegram_relay_server`.
 
 ## Running the Server
 
 ```bash
 # Default: port 8080, 3 workers, 20 outgoing calls/sec
-./build/relay_server
+./build/telegram_relay_server
 
-# Positional arguments: ./build/relay_server [PORT] [WORKERS] [RATE_LIMIT]
-./build/relay_server 8080 5 20
+# Positional arguments: ./build/telegram_relay_server [PORT] [WORKERS] [RATE_LIMIT]
+./build/telegram_relay_server 8080 5 20
 
 # Or configure via environment variables
-PORT=9000 WORKERS=8 RATE_LIMIT=20 ./build/relay_server
+PORT=9000 WORKERS=8 RATE_LIMIT=20 ./build/telegram_relay_server
 ```
+
+
 
 ## Testing
 

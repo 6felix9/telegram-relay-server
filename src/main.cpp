@@ -120,8 +120,10 @@ int main(int argc, char* argv[]) {
     svr.Post("/message", handle_relay_request);
 
     std::cout << "===========================================" << std::endl;
-    std::cout << " Relay Engine Server running on port " << port << std::endl;
+    std::cout << " Telegram Relay Server running on port " << port << std::endl;
     std::cout << " Worker threads active: " << worker_count << std::endl;
+
+
     std::cout << " Global Rate Limit:     " << rate_limit << " calls/sec" << std::endl;
     std::cout << " Endpoints:" << std::endl;
     std::cout << "   GET  /health" << std::endl;

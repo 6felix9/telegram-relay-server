@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(relay_engine CXX)
+project(telegram_relay_server CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -22,7 +22,9 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(nlohmann_json httplib)
 
-add_executable(relay_server src/main.cpp)
-target_include_directories(relay_server PRIVATE include)
-target_link_libraries(relay_server PRIVATE httplib::httplib nlohmann_json::nlohmann_json)
+add_executable(telegram_relay_server src/main.cpp)
+target_include_directories(telegram_relay_server PRIVATE include)
+target_link_libraries(telegram_relay_server PRIVATE httplib::httplib nlohmann_json::nlohmann_json)
+
+
 

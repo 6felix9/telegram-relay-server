@@ -14,7 +14,8 @@ echo "========================================================="
 HEALTH=$(curl -s "http://localhost:${PORT}/health" || echo "")
 if [ -z "$HEALTH" ]; then
   echo "Error: Could not connect to server on port ${PORT}."
-  echo "Make sure the server is running (e.g. ./build/relay_server ${PORT})"
+  echo "Make sure the server is running (e.g. ./build/telegram_relay_server ${PORT})"
+
   exit 1
 fi
 
